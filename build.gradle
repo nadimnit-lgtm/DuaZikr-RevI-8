@@ -1,0 +1,33 @@
+# ---- Android / Gradle build output ----
+.gradle/
+build/
+app/build/
+captures/
+*.apk
+*.aab
+*.ap_
+*.dex
+*.class
+
+# IMPORTANT: the Gradle wrapper jar MUST be committed (CI checks for it).
+# Do not ignore: gradle/wrapper/gradle-wrapper.jar
+
+# ---- Local / machine-specific ----
+local.properties
+.idea/
+*.iml
+.DS_Store
+Thumbs.db
+
+# ---- Signing secrets (never commit) ----
+*.jks
+*.keystore
+keystore.properties
+
+# ---- Node (DOM smoke test installs jsdom in CI only) ----
+node_modules/
+package-lock.json
+
+# ---- Python cache ----
+__pycache__/
+*.pyc
