@@ -41,31 +41,19 @@ jobs:
           fi
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
-          echo "Android project root detected: $PROJECT_DIR"
 
-      - name: Remove invalid local Gradle wrapper JAR from CI workspace
+      - name: Remove invalid Gradle wrapper JARs from CI workspace
         shell: bash
         run: |
           set -euo pipefail
-          cd "$PROJECT_DIR"
-
-          if [ -f "gradle/wrapper/gradle-wrapper.jar" ]; then
-            echo "Removing repository Gradle wrapper JAR from CI workspace."
-            rm -f gradle/wrapper/gradle-wrapper.jar
-          fi
-
-          echo "Build will use official Gradle ${GRADLE_VERSION}."
+          find "$GITHUB_WORKSPACE" -path "*/gradle/wrapper/gradle-wrapper.jar" -type f -print -delete || true
+          find "$GITHUB_WORKSPACE" -path "*/gradle/wrapper/gradle-wrapper.jar" -type f -print || true
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: ${{ env.JAVA_VERSION }}
-          cache: gradle
-          cache-dependency-path: |
-            **/*.gradle
-            **/*.gradle.kts
-            **/gradle-wrapper.properties
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
@@ -83,17 +71,29 @@ jobs:
             "build-tools;${ANDROID_BUILD_TOOLS}" \
             "platform-tools"
 
-      - name: Set up official Gradle
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: ${{ env.GRADLE_VERSION }}
+      - name: Install official Gradle without wrapper validation
+        shell: bash
+        run: |
+          set -euo pipefail
+          GRADLE_ZIP="gradle-${GRADLE_VERSION}-bin.zip"
+          GRADLE_URL="https://services.gradle.org/distributions/${GRADLE_ZIP}"
+          INSTALL_DIR="$RUNNER_TEMP/gradle"
+
+          mkdir -p "$INSTALL_DIR"
+          curl -sSL "$GRADLE_URL" -o "$RUNNER_TEMP/$GRADLE_ZIP"
+          unzip -q "$RUNNER_TEMP/$GRADLE_ZIP" -d "$INSTALL_DIR"
+          echo "$INSTALL_DIR/gradle-${GRADLE_VERSION}/bin" >> "$GITHUB_PATH"
+
+      - name: Show official Gradle version
+        shell: bash
+        run: gradle --version
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Validate required project files
+      - name: Validate required Rev I-8 files
         shell: bash
         run: |
           set -euo pipefail
@@ -122,8 +122,6 @@ jobs:
               exit 1
             fi
           done
-
-          echo "All required Rev I-8 project files are present."
 
       - name: Validate JSON content files
         shell: bash
@@ -212,12 +210,6 @@ jobs:
             exit 1
           fi
 
-          echo "Rev I-8 TV-only checks passed."
-
-      - name: Show Gradle version
-        shell: bash
-        run: gradle --version
-
       - name: Build debug APK with official Gradle
         shell: bash
         run: |
@@ -235,7 +227,6 @@ jobs:
               exit 0
             fi
 
-            echo "Debug build attempt ${attempt} failed with exit code ${status}."
             if [ "$attempt" -lt 3 ]; then
               rm -rf ~/.gradle/caches/modules-2/files-2.1 || true
               sleep 30
@@ -259,7 +250,6 @@ jobs:
 
           mkdir -p "$GITHUB_WORKSPACE/artifact"
           cp "$APK_PATH" "$GITHUB_WORKSPACE/artifact/dua-zikr-rev-i-8-debug.apk"
-          ls -lah "$GITHUB_WORKSPACE/artifact"
 
       - name: Upload debug APK artifact
         uses: actions/upload-artifact@v4
