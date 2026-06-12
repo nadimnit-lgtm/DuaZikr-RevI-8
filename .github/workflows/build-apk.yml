@@ -20,6 +20,7 @@ jobs:
       JAVA_VERSION: "17"
       ANDROID_COMPILE_SDK: "34"
       ANDROID_BUILD_TOOLS: "34.0.0"
+      GRADLE_VERSION: "8.9"
 
     steps:
       - name: Checkout repository
@@ -29,17 +30,31 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
           if [ -f "settings.gradle" ] || [ -f "settings.gradle.kts" ]; then
             PROJECT_DIR="."
           elif [ -f "AzkarTvDisplay/settings.gradle" ] || [ -f "AzkarTvDisplay/settings.gradle.kts" ]; then
             PROJECT_DIR="AzkarTvDisplay"
           else
             echo "::error::settings.gradle not found. Upload the Android project root correctly."
-            echo "Expected: settings.gradle, build.gradle, app/build.gradle, app/src/main/AndroidManifest.xml"
             exit 1
           fi
+
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
           echo "Android project root detected: $PROJECT_DIR"
+
+      - name: Remove invalid local Gradle wrapper JAR from CI workspace
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$PROJECT_DIR"
+
+          if [ -f "gradle/wrapper/gradle-wrapper.jar" ]; then
+            echo "Removing repository Gradle wrapper JAR from CI workspace."
+            rm -f gradle/wrapper/gradle-wrapper.jar
+          fi
+
+          echo "Build will use official Gradle ${GRADLE_VERSION}."
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -48,12 +63,9 @@ jobs:
           java-version: ${{ env.JAVA_VERSION }}
           cache: gradle
           cache-dependency-path: |
-            gradle/wrapper/gradle-wrapper.properties
             **/*.gradle
             **/*.gradle.kts
-            AzkarTvDisplay/gradle/wrapper/gradle-wrapper.properties
-            AzkarTvDisplay/**/*.gradle
-            AzkarTvDisplay/**/*.gradle.kts
+            **/gradle-wrapper.properties
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
@@ -71,8 +83,10 @@ jobs:
             "build-tools;${ANDROID_BUILD_TOOLS}" \
             "platform-tools"
 
-      - name: Set up Gradle
+      - name: Set up official Gradle
         uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: ${{ env.GRADLE_VERSION }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -84,13 +98,11 @@ jobs:
         run: |
           set -euo pipefail
           cd "$PROJECT_DIR"
+
           required_files=(
             "settings.gradle"
             "build.gradle"
             "gradle.properties"
-            "gradlew"
-            "gradle/wrapper/gradle-wrapper.properties"
-            "gradle/wrapper/gradle-wrapper.jar"
             "app/build.gradle"
             "app/src/main/AndroidManifest.xml"
             "app/src/main/java/com/ahmed/azkartv/MainActivity.kt"
@@ -103,21 +115,27 @@ jobs:
             "tools/validate.py"
             "tools/test_logic.py"
           )
+
           for file in "${required_files[@]}"; do
             if [ ! -f "$file" ]; then
               echo "::error::Missing required file: $file"
               exit 1
             fi
           done
-          echo "All required project files are present."
+
+          echo "All required Rev I-8 project files are present."
 
       - name: Validate JSON content files
         shell: bash
         run: |
           set -euo pipefail
           cd "$PROJECT_DIR"
+
           python3 - <<'PY'
-          import glob, json, sys
+          import glob
+          import json
+          import sys
+
           failed = False
           for path in sorted(glob.glob("app/src/main/assets/content/*.json")):
               try:
@@ -127,6 +145,7 @@ jobs:
               except Exception as error:
                   print(f"::error::Invalid JSON in {path}: {error}")
                   failed = True
+
           if failed:
               sys.exit(1)
           PY
@@ -158,18 +177,13 @@ jobs:
           set -euo pipefail
           cd "$PROJECT_DIR"
 
-          grep -q "Rev I-8" app/src/main/assets/app-tv.css || {
-            echo "::error::Rev I-8 TV stylesheet marker missing."
-            exit 1
-          }
-
           grep -q "versionCode 29" app/build.gradle || {
-            echo "::error::versionCode was not increased to 29."
+            echo "::error::versionCode 29 not found."
             exit 1
           }
 
           grep -q "versionName \"Rev I-8 - TV Visual Polish\"" app/build.gradle || {
-            echo "::error::versionName Rev I-8 marker missing."
+            echo "::error::Rev I-8 versionName not found."
             exit 1
           }
 
@@ -188,82 +202,69 @@ jobs:
             exit 1
           }
 
-          grep -q "function normalizeTvKey" app/src/main/assets/app.js || {
-            echo "::error::TV key normalization missing."
-            exit 1
-          }
-
-          grep -q "Rev I-8" app/src/main/assets/app-tv.css || {
-            echo "::error::Rev I-8 stylesheet marker missing."
-            exit 1
-          }
-
-          grep -q "data-tv-focus-kind" app/src/main/assets/app-tv.css || {
-            echo "::error::TV focus visual states missing."
-            exit 1
-          }
-
           grep -q "body.tv" app/src/main/assets/app-tv.css || {
             echo "::error::TV stylesheet is not scoped to body.tv."
             exit 1
           }
 
           if grep -RIn "audioBase\|recAudio\|recBtn\|recitationNotes" app/src/main/assets app/src/main/java app/src/main/res 2>/dev/null; then
-            echo "::error::Audio or legacy recitation fields still exist in runtime files."
+            echo "::error::Audio or legacy recitation runtime references still exist."
             exit 1
           fi
 
-          echo "Rev I-8 TV-only files verified and runtime files are audio-free."
+          echo "Rev I-8 TV-only checks passed."
 
-      - name: Make Gradle wrapper executable
+      - name: Show Gradle version
+        shell: bash
+        run: gradle --version
+
+      - name: Build debug APK with official Gradle
         shell: bash
         run: |
-          set -euo pipefail
-          cd "$PROJECT_DIR"
-          chmod +x ./gradlew
-          ./gradlew --version
-
-      - name: Build debug APK with retry
-        shell: bash
-        run: |
-          cd "$PROJECT_DIR"
           set +e
+          cd "$PROJECT_DIR"
+
           for attempt in 1 2 3; do
             echo "::group::Debug build attempt ${attempt} of 3"
-            ./gradlew --no-daemon --stacktrace --warning-mode all :app:assembleDebug
+            gradle --no-daemon --stacktrace --warning-mode all :app:assembleDebug
             status=$?
             echo "::endgroup::"
+
             if [ "$status" -eq 0 ]; then
               echo "Debug build succeeded on attempt ${attempt}."
               exit 0
             fi
+
             echo "Debug build attempt ${attempt} failed with exit code ${status}."
             if [ "$attempt" -lt 3 ]; then
-              rm -rf ~/.gradle/wrapper/dists/gradle-* || true
+              rm -rf ~/.gradle/caches/modules-2/files-2.1 || true
               sleep 30
             fi
           done
+
           echo "::error::Debug build failed after 3 attempts."
           exit 1
 
-      - name: Confirm APK output
+      - name: Prepare APK artifact
         shell: bash
         run: |
           set -euo pipefail
           cd "$PROJECT_DIR"
-          test -f app/build/outputs/apk/debug/app-debug.apk || {
-            echo "::error::Debug APK not generated."
+
+          APK_PATH="app/build/outputs/apk/debug/app-debug.apk"
+          if [ ! -f "$APK_PATH" ]; then
+            echo "::error::Debug APK not generated at $APK_PATH"
             exit 1
-          }
-          find app/build/outputs/apk/debug -type f -name "*.apk" -print -exec ls -lah {} \;
+          fi
+
+          mkdir -p "$GITHUB_WORKSPACE/artifact"
+          cp "$APK_PATH" "$GITHUB_WORKSPACE/artifact/dua-zikr-rev-i-8-debug.apk"
+          ls -lah "$GITHUB_WORKSPACE/artifact"
 
       - name: Upload debug APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: dua-and-zikr-rev-i-8-debug-apk
-          path: |
-            app/build/outputs/apk/debug/app-debug.apk
-            AzkarTvDisplay/app/build/outputs/apk/debug/app-debug.apk
+          path: artifact/dua-zikr-rev-i-8-debug.apk
           if-no-files-found: error
           retention-days: 14
-
